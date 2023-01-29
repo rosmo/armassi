@@ -57,8 +57,9 @@ class Communication:
         if self.lora and self.lora.rx_done():
             message = self.receive()
             if message:
-                self.send(self.my_address, message.src, "!" +
-                          str(message.rssi) + "|" + str(message.s), id=message.id, want_ack=False)
+                if message.flags & 0b1000 and not message.text.startswith("!"):
+                     self.send(self.my_address, message.src, "!|" +
+                                  str(message.rssi) + "|" + str(message.s), id=message.id, want_ack=False)
                 self.messages.append(message)
                 return True
         return False
@@ -103,22 +104,16 @@ class Communication:
             return None
 
         msgID = int.from_bytes(packet[8:12], 'big')
-        packet[15] & 0b00000111
-
         msg = self.Message(dst=self.my_address, src=list(packet[4:8]), id=msgID, flags=packet[15],
                            s=self.lora.last_snr, rssi=self.lora.last_rssi, tstamp=time.localtime(), text=packet_text)
         return msg
 
-    def send(self, sender, destination, text, id=0, hops=0, want_ack=True):
+    def send(self, sender, destination, text, id=0, hops=3, want_ack=True):
         dest = bytearray(destination)
         src = bytearray(sender)
         msg_id = struct.pack("!I", id)
-        flags = bytearray(struct.pack("!I", hops))
-        if want_ack:
-            flags[3] |= 0b1000
-        else:
-            flags[3] &= 0b0111
-
+        flags = bytearray(struct.pack("!I", hops|0b1000 if want_ack else hops&0b0111))
+        
         payload = bytearray(len(text))
         if self.encryption_key:
             cipher = aesio.AES(self.encryption_key,

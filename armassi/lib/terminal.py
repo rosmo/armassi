@@ -125,6 +125,8 @@ class Terminal:
                         self.comms.send_message(text)
                         self.root_container.handle_input(defs.KEY_ENTER)
                         self.inputbox.set("")
+                        self.inputbox.redraw()
+                        self.pyte_screen.dirty.add(self.pyte_screen.cursor.y)
                     else:
                         self.menubar.handle_input(defs.KEY_ENTER)
                 elif input == "bsp":
