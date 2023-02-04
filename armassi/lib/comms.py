@@ -99,6 +99,7 @@ class Communication:
                     node_info = MeshtasticNodeInfo.decode(message.packet['payload'])
                     if node_info:
                         refresh = self.nick[3](node_info['user']['macaddr'], node_info['user']['id'])
+                        self.announce_myself()
                 return refresh
         self.idx += 1
         if self.idx > 1000:

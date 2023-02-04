@@ -81,7 +81,7 @@ class Terminal:
             input = self.input_fn()
             if input:
                 current_input_time = int(time.monotonic() * 1000)
-                if (current_input_time - self.last_input) < 200:
+                if (current_input_time - self.last_input) < 180:
                     input = None
                 else:
                     self.last_input = current_input_time
