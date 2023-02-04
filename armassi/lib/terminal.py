@@ -159,8 +159,11 @@ class Terminal:
         received_messages = self.comms.get_messages()
         if len(received_messages) > 0:
             for message in received_messages:
-                message_text = message.packet['payload'].decode("utf-8")
-                self.add_line(message_text, nick_id=message.src, timestamp=message.tstamp)
+                if not isinstance(message, str):
+                    message_text = message.packet['payload'].decode("utf-8")
+                    self.add_line(message_text, nick_id=message.src, timestamp=message.tstamp)
+                else:
+                    self.add_line(message, timestamp=time.localtime())
 
             self.comms.clear_messages()
             self.render_lines()

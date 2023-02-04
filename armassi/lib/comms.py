@@ -99,6 +99,8 @@ class Communication:
                     node_info = MeshtasticNodeInfo.decode(message.packet['payload'])
                     if node_info:
                         refresh = self.nick[3](node_info['user']['macaddr'], node_info['user']['id'])
+                        if refresh:
+                            self.messages.append("-!- %s [%s@%s] has joined." % (node_info['user']['id'], node_info['user']['short_name'], binascii.hexlify(node_info['user']['macaddr']).decode("utf-8")))
                         self.announce_myself()
                 return refresh
         self.idx += 1
