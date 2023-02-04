@@ -67,7 +67,8 @@ class Screen:
         for k, v in enumerate(Screen.dirty):
             if v:
                 Screen.dirty[k] = False
-    
+        Screen.cursor_is_dirty = False
+        
     @staticmethod
     def get_dirty():
         dirty_lines = []
@@ -78,12 +79,13 @@ class Screen:
 
     @staticmethod
     def dirty_cursor():
-        Screen.dirty[Screen.y] = True
+        Screen.cursor_is_dirty = True
 
     @staticmethod
     def cls():
         Screen.buffer = []
         Screen.dirty = []
+        Screen.cursor_is_dirty = False
         for row in range(Screen.height):
             Screen.buffer.append([])
             Screen.dirty.append([])

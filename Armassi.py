@@ -28,5 +28,5 @@ except NameError:
     destination = "2.2.2.2"
 
 armassi = Armassi(display, input_fn=lambda: getKey(0), lora_config=lora_config,
-                  my_address=myAddress, remote_address=destination, encryption_key=password, encryption_iv=passwordIv)
+                  my_address=myAddress, remote_address=destination, encryption_key=password, encryption_iv=passwordIv, beep=beep)
 armassi.main()

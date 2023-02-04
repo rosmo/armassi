@@ -16,13 +16,11 @@ try:
     on_device = False
 except ImportError:
     on_device = True
-import gc
     
 if on_device:
     import displayio
     import bitmaptools
     import terminalio
-    gc.collect()
 else:
     import sdl2.ext
 
@@ -88,7 +86,6 @@ class Terminal:
 
             if input:
                 if input == "alt":
-                    gc.collect()
                     self.kb_state += 1
                     state_updated = True
                     if self.kb_state > 2:
@@ -150,7 +147,6 @@ class Terminal:
                             self.menubar.handle_input(defs.KEY_RIGHT)
                     else:
                         self.root_container.handle_input(input.encode("utf-8"))
-            gc.collect()
             return state_updated
         return state_updated
 
@@ -167,7 +163,6 @@ class Terminal:
 
             self.comms.clear_messages()
             self.render_lines()
-            gc.collect()
             return True
         return False
 
@@ -186,10 +181,12 @@ class Terminal:
         return "%02d:%02d" % (now.tm_hour, now.tm_min)
 
     def update_status_bar(self):
+        previous_statusbar = self.statusbar.t
         self.statusbar.t = " [%s] [%s] [#general]" % (
             self.get_current_time(), self.nick[0]())
         self.statusbar.t = self.statusbar.t + (" " * (self.width - len(self.statusbar.t)))
-        self.statusbar.redraw()
+        if self.statusbar.t != previous_statusbar:
+            self.statusbar.redraw()
 
     def add_line(self, line, nick_id=None, timestamp=False):
         self.lines.append((time.localtime() if timestamp else None, nick_id, line))
@@ -279,7 +276,6 @@ class Terminal:
         else:
             self.ui_group = displayio.Group()
             self.display.show(self.ui_group)
-            gc.collect()
 
             self.pico_palette = displayio.Palette((len(self.ansi_palette)) * 2)
             idx = 0
@@ -290,10 +286,7 @@ class Terminal:
                                                 << 16) | (colors[1][1] << 8) | colors[1][2]
             self.ansi_palette = None
             
-            gc.collect()
             self.display_bitmap = displayio.Bitmap(self.pixel_width, self.pixel_height, 16)
-
-            gc.collect()
             self.tilegrid = displayio.TileGrid(self.display_bitmap, pixel_shader=self.pico_palette)
             self.tilemap = []
             tiles_per_row = self.font.bitmap.width / self.font_width
@@ -303,8 +296,6 @@ class Terminal:
                 self.tilemap.append((dx, dy))
 
             self.ui_group.append(self.tilegrid)
-
-            gc.collect()
 
         self.root_container = widgets.Container(0, 0, self.width, self.height)
 
@@ -330,13 +321,33 @@ class Terminal:
         self.menubar.redraw()
 
         self.root_container.change_focus(self.inputbox)
-        gc.collect()
 
     def draw_pc(self):
         window_surface = sdl2.SDL_GetWindowSurface(self.sdl_window.window)
         cursor_x = Screen.x
         cursor_y = Screen.y
-        for y in Screen.get_dirty():
+        dirty_lines = Screen.get_dirty()
+        if len(dirty_lines) == 0 and Screen.cursor_is_dirty and Screen.cursor_on:
+            if Screen.cursor_on and y == cursor_y and x == cursor_x:
+                data = " "
+                fg_color = 9
+                bg_color = 6 if self.tick else 0
+                if self.kb_state == 1:
+                    data = "^"
+                elif self.kb_state == 2:
+                    data = "|"
+                idx = ord(data)
+                dst = sdl2.SDL_Rect(cursor_x * self.font_width,
+                                    cursor_y * self.font_height)
+                sdl2.SDL_SetPaletteColors(self.sdl_glyphs[idx].format.contents.palette, self.sdl_palette[fg_color], 1, 1)
+                sdl2.SDL_SetPaletteColors(self.sdl_glyphs[idx].format.contents.palette, self.sdl_palette[bg_color], 0, 1)
+
+                sdl2.SDL_BlitSurface(
+                    self.sdl_glyphs[idx], None,
+                    window_surface, dst
+                )
+
+        for y in dirty_lines:
             for x in range(self.width):
                 data, fg_color, bg_color = Screen.buffer[y][x]
                 if Screen.cursor_on and y == cursor_y and x == cursor_x:
@@ -362,14 +373,44 @@ class Terminal:
     def draw_device(self):
         cursor_x = Screen.x
         cursor_y = Screen.y
-        for y in Screen.get_dirty():
-            for x in range(self.width):
+        dirty_lines = Screen.get_dirty()
+        if len(dirty_lines) == 0 and Screen.cursor_is_dirty and Screen.cursor_on:
+            tx = self.font_width * cursor_x
+            ty = self.font_height * cursor_y
+            data = " "
+            fg_color = 9
+            bg_color = 6 if self.tick else 0
+            if self.kb_state == 1:
+                data = "^"
+            elif self.kb_state == 2:
+                data = "|"
+            if data != " ":
+                idx = ord(data)
+                glyph = self.font.get_glyph(idx)
+                dx, dy = self.tilemap[glyph.tile_index]
+                fy, fx = 0, 0
+                while fy < self.font_height:
+                    fx = 0
+                    while fx < self.font_width:
+                        if glyph.bitmap[dx + fx, dy + fy] == 1:
+                            self.display_bitmap[tx + fx, ty + fy] = fg_color
+                        else:
+                            self.display_bitmap[tx + fx, ty + fy] = bg_color
+                        fx += 1
+                    fy += 1
+            else:
+                bitmaptools.fill_region(self.display_bitmap, tx, ty, tx + self.font_width, ty + self.font_height, bg_color)
+
+        for y in dirty_lines:
+            x = 0
+            while x < (self.width - 1):
                 tx = self.font_width * x
                 ty = self.font_height * y
                 data, fg_color, bg_color = Screen.buffer[y][x]
                 if Screen.cursor_on and y == cursor_y and x == cursor_x:
                     fg_color = 9
                     bg_color = 6 if self.tick else 0
+                    data = "_"
                     if self.kb_state == 1:
                         data = "^"
                     elif self.kb_state == 2:
@@ -378,15 +419,26 @@ class Terminal:
                     idx = ord(data)
                     glyph = self.font.get_glyph(idx)
                     dx, dy = self.tilemap[glyph.tile_index]
-                    for fy in range(self.font_height):
-                        for fx in range(self.font_width):
+                    fy, fx = 0, 0
+                    while fy < self.font_height:
+                        fx = 0
+                        while fx < self.font_width:
                             if glyph.bitmap[dx + fx, dy + fy] == 1:
                                 self.display_bitmap[tx + fx, ty + fy] = fg_color
                             else:
                                 self.display_bitmap[tx + fx, ty + fy] = bg_color
+                            fx += 1
+                        fy += 1
                 else:
-                    bitmaptools.fill_region(self.display_bitmap, tx, ty, tx + self.font_width, ty + self.font_height, bg_color)
-        
+                    bx = x
+                    while bx < self.width:
+                        if Screen.buffer[y][bx][0] != data or Screen.buffer[y][bx][2] != bg_color:
+                            break
+                        bx += 1
+                    bx -= 1
+                    bitmaptools.fill_region(self.display_bitmap, tx, ty, (bx * self.font_width) + self.font_width, ty + self.font_height, bg_color)
+                    x = bx
+                x += 1        
         Screen.clean()
         self.display.refresh()
 

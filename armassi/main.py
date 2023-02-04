@@ -12,9 +12,16 @@ import time
 import json
 import random
 import binascii
+import board
+import digitalio
+import gc
 
+gc.collect()
+
+led = digitalio.DigitalInOut(board.LED)
+led.direction = digitalio.Direction.OUTPUT
 class Armassi:
-    def __init__(self, display=None, input_fn=None, lora_config={}, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None):
+    def __init__(self, display=None, input_fn=None, lora_config={}, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None, beep=None):
         print("Armassi starting...")
         if display:
             display.auto_refresh = False
@@ -47,7 +54,7 @@ class Armassi:
         nick = (self.get_nick, self.set_nick, self.get_nick_for_id, self.add_nick_for_id)
         gc.collect()
         self.comms = Communication(lora_config, my_address=self.my_address, remote_address=remote_address,
-                                   encryption_key=encryption_key, encryption_iv=encryption_iv, nick=nick)
+                                   encryption_key=encryption_key, encryption_iv=encryption_iv, nick=nick, beep=beep)
         
         gc.collect()
         self.terminal = Terminal(display=display, width=display.width if display else 320,
@@ -87,22 +94,27 @@ class Armassi:
         self.terminal.draw()
         self.comms.initialize()
         last_time = int(time.monotonic() * 1000)
+        jiffies = 0
         while True:
             had_comms = self.terminal.handle_comms()
             had_inputs = self.terminal.process_inputs()
             current_time = int(time.monotonic() * 1000)
             if (current_time - last_time) > 250:
                 self.terminal.handle_tick()
-                had_tick = True
                 last_time = current_time
+                had_tick = True        
             else:
                 had_tick = False
             if had_comms or had_inputs or had_tick:
+                if led.value:
+                    led.value = False
+                else:
+                    led.value = True
+            
                 self.terminal.draw()
-            else:
-                time.sleep(0.025)
             if self.terminal.should_quit():
                 break
+            jiffies += 1
 
 if __name__ == "__main__":
     armassi = Armassi()

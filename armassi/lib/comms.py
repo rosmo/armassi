@@ -44,7 +44,7 @@ MeshtasticNodeInfo = minipb.Wire([
 class Communication:
     broadcast = b"\xff\xff\xff\xff"
 
-    def __init__(self, lora_config=None, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None, nick=None):
+    def __init__(self, lora_config=None, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None, nick=None, beep=None):
         self.lora_config = lora_config
         self.lora = None
         self.my_address = my_address
@@ -54,6 +54,7 @@ class Communication:
         self.encryption_iv = encryption_iv
         self.idx = 0
         self.nick = nick
+        self.beep = beep
 
     Message = namedtuple(
         "Message", ["dst", "src", "id", "flags", "s", "rssi", "tstamp", "packet"])
@@ -94,6 +95,7 @@ class Communication:
                 refresh = False
                 if message.packet['portnum'] == 1: # Text message
                     self.messages.append(message)
+                    self.beep()
                     refresh = True
                 if message.packet['portnum'] == 4: # Nodeinfo message
                     node_info = MeshtasticNodeInfo.decode(message.packet['payload'])
@@ -103,10 +105,6 @@ class Communication:
                             self.messages.append("-!- %s [%s@%s] has joined." % (node_info['user']['id'], node_info['user']['short_name'], binascii.hexlify(node_info['user']['macaddr']).decode("utf-8")))
                         self.announce_myself()
                 return refresh
-        self.idx += 1
-        if self.idx > 1000:
-            self.announce_myself()
-            self.idx = 0
         return False
 
     def announce_myself(self):
