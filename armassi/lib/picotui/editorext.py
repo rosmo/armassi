@@ -3,8 +3,6 @@
 # Copyright (c) 2015 Paul Sokolovsky
 # Distributed under MIT License
 #
-import sys
-import os
 from .editor import *
 
 
@@ -161,37 +159,3 @@ class EditorExt(Editor):
         self.dialog_box(left, top, width, height, title)
         e = LineEditor(left + 1, top + 1, width - 2, height - 2)
         return e.edit(line)
-
-
-if __name__ == "__main__":
-
-    with open(sys.argv[1]) as f:
-        content = f.read().splitlines()
-        #content = f.readlines()
-
-
-#os.write(1, b"\x1b[18t")
-#key = os.read(0, 32)
-#print(repr(key))
-
-#key = os.read(0, 32)
-#print(repr(key))
-#1/0
-
-    e = EditorExt(left=1, top=1, width=60, height=25)
-    e.init_tty()
-    e.enable_mouse()
-
-    s = e.dialog_edit_line(10, 5, 40, 3, title="Enter name:", line="test")
-    e.cls()
-    e.deinit_tty()
-    print()
-    print(s)
-
-    1/0
-
-#    e.cls()
-    e.draw_box(0, 0, 62, 27)
-    e.set_lines(content)
-    e.loop()
-    e.deinit_tty()

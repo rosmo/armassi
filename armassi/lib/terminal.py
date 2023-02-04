@@ -1,11 +1,14 @@
 from adafruit_bitmap_font import bitmap_font
 import time
 import math
-from .textwrap import wrap
-from .picotui import screen, widgets, menu, defs
-from .keys import get_keymaps
+
+from screen import Screen
+from textwrap import wrap
+from picotui import widgets, menu, defs
+from keys import get_keymaps
+
 try:
-    from .pyte import Stream as PyteStream, Screen as PyteScreen
+    pass
 except ImportError as e:
     print(e)
 try:
@@ -26,14 +29,6 @@ else:
 __all__ = ["Terminal"]
 
 class Terminal:
-    pixel_width = None
-    pixel_height = None
-    width = None
-    height = None
-
-    font = None
-    font_width = None
-    font_height = None
 
     ansi_palette = [
         ((0, 0, 0), (85, 87, 83)),
@@ -45,20 +40,6 @@ class Terminal:
         ((128, 0, 128), (173, 127, 168)),
         ((0, 128, 128), (52, 226, 226)),
     ]
-
-    lines = []
-    amount_of_lines = 1
-
-    # Picotui widgets
-    root_container = None
-    menubar = None
-    messages = None
-    statusbar = None
-    inputbox = None
-    prompt = None
-
-    events = []
-    kb_state = 0
 
     keymap_shift = {}
     keymap_alt = {}
@@ -72,11 +53,11 @@ class Terminal:
                 if event.type == sdl2.SDL_KEYUP:
                     if event.key.keysym.sym in [sdl2.SDLK_RSHIFT, sdl2.SDLK_LSHIFT]:
                         self.kb_state = 1
-                        self.pyte_screen.dirty.add(self.pyte_screen.cursor.y)
+                        Screen.dirty_cursor()
                         state_updated = True
                     elif event.key.keysym.sym in [sdl2.SDLK_RALT, sdl2.SDLK_LALT]:
                         self.kb_state = 2
-                        self.pyte_screen.dirty.add(self.pyte_screen.cursor.y)
+                        Screen.dirty_cursor()
                         state_updated = True
                     else:
                         input = None
@@ -99,13 +80,21 @@ class Terminal:
         if on_device:
             input = self.input_fn()
             if input:
+                current_input_time = int(time.monotonic() * 1000)
+                if (current_input_time - self.last_input) < 200:
+                    input = None
+                else:
+                    self.last_input = current_input_time
+
+            if input:
                 if input == "alt":
                     gc.collect()
                     self.kb_state += 1
                     state_updated = True
                     if self.kb_state > 2:
                         self.kb_state = 0
-                    self.pyte_screen.dirty.add(self.pyte_screen.cursor.y)
+                    Screen.dirty_cursor()
+                    state_updated = True
                 else:
                     if self.kb_state == 1:
                         inputs.append(self.keymap_shift[input])
@@ -122,15 +111,27 @@ class Terminal:
                 if input == "ent":
                     if not self.menubar.focus:
                         text = self.inputbox.get()
-                        self.comms.send_message(text)
+                        if text.startswith("/"): # Command
+                            cmd = text[1:].split(" ", 3)
+                            if cmd[0].strip().lower() == "set" and len(cmd) == 3:
+                                if cmd[1].strip().lower() == "nick":
+                                    self.nick[1](cmd[2].strip())
+                                    self.add_line("Nick changed to: %s" % (self.nick[0]()))
+                        else:
+                            self.comms.send_message(text=text)
+                        
                         self.root_container.handle_input(defs.KEY_ENTER)
                         self.inputbox.set("")
                         self.inputbox.redraw()
-                        self.pyte_screen.dirty.add(self.pyte_screen.cursor.y)
+                        Screen.dirty_cursor()
                     else:
                         self.menubar.handle_input(defs.KEY_ENTER)
                 elif input == "bsp":
                     self.root_container.handle_input(defs.KEY_BACKSPACE)
+                elif input == "lt" or input == "up":
+                    self.kb_state = 0
+                    Screen.dirty_cursor()
+                    state_updated = True
                 elif input == "up" or input == "dn":
                     if not self.menubar.focus:
                         self.menubar.focus = True
@@ -158,13 +159,17 @@ class Terminal:
         received_messages = self.comms.get_messages()
         if len(received_messages) > 0:
             for message in received_messages:
-                self.add_line("[%02d:%02d] <%s> %s" % (message.tstamp.tm_hour, message.tstamp.tm_min, self.comms.format_address(message.src), message.text))
+                message_text = message.packet['payload'].decode("utf-8")
+                self.add_line(message_text, nick_id=message.src, timestamp=message.tstamp)
 
             self.comms.clear_messages()
             self.render_lines()
             gc.collect()
             return True
         return False
+
+    def handle_tick(self):
+        self.update_status_bar()
         
     def should_quit(self):
         if not on_device:
@@ -177,22 +182,33 @@ class Terminal:
         now = time.localtime()
         return "%02d:%02d" % (now.tm_hour, now.tm_min)
 
-    def set_status_bar(self, text):
-        self.statusbar.t = " [%s] [rosmo] [#general]" % (
-            self.get_current_time())
+    def update_status_bar(self):
+        self.statusbar.t = " [%s] [%s] [#general]" % (
+            self.get_current_time(), self.nick[0]())
         self.statusbar.t = self.statusbar.t + (" " * (self.width - len(self.statusbar.t)))
+        self.statusbar.redraw()
 
-    def add_line(self, line, timestamp=False):
-        self.lines.append(line)
+    def add_line(self, line, nick_id=None, timestamp=False):
+        self.lines.append((time.localtime() if timestamp else None, nick_id, line))
 
     def render_lines(self):
-        range_start = len(self.lines)
-        range_end = 0 if len(self.lines) < self.amount_of_lines else len(
-            self.lines) - self.amount_of_lines
+        lines = []
+        for k, v in enumerate(self.lines):
+            nick = ""
+            timestamp = ""
+            if v[1]:
+                nick = "<%s> " % (self.nick[2](v[1]))
+            if v[0]:
+                timestamp = "%02d:%02d " % (v[0].tm_hour, v[0].tm_min)
+            lines.append("%s%s%s" % (timestamp, nick, v[2]))
+
+        range_start = len(lines)
+        range_end = 0 if len(lines) < self.amount_of_lines else len(
+            lines) - self.amount_of_lines
         result = []
         for idx in range(range_start, range_end, -1):
             wrapped = wrap(
-                self.lines[idx - 1], self.width, indent1='| ')
+                lines[idx - 1], self.width, indent1='| ')
             result = wrapped + result
             if len(result) > self.amount_of_lines:
                 break
@@ -201,14 +217,19 @@ class Terminal:
         self.messages.set_lines(result)
         self.messages.redraw()
 
-    def __init__(self, display=None, width=320, height=240, input_fn=None, comms=None):
+    def __init__(self, display=None, width=320, height=240, input_fn=None, comms=None, nick=None):
+        self.last_input = (time.monotonic() * 1000)
+        self.tick = True
+
         self.input_fn = input_fn
         self.comms = comms
+        self.nick = nick
+
         self.pixel_width = width
         self.pixel_height = height
         self.display = display
 
-        keymap_normal, keymap_shift, keymap_alt = get_keymaps()
+        keymap_normal, keymap_alt, keymap_shift = get_keymaps()
         for ridx, row in enumerate(keymap_normal):
             for cidx, col in enumerate(row):
                 self.keymap_shift[col] = keymap_shift[ridx][cidx]
@@ -218,16 +239,20 @@ class Terminal:
             self.font = bitmap_font.load_font("fonts/gohu-14.pcf")
         else:
             self.font = terminalio.FONT
+        
+        self.lines = []
+        self.events = []
+        self.kb_state = 0
+
         font_box = self.font.get_bounding_box()
         self.font_width = font_box[0]
         self.font_height = font_box[1]
         self.width = math.floor(self.pixel_width / self.font_width)
         self.height = math.floor(self.pixel_height / self.font_height)
         self.amount_of_lines = self.height - 3
-                
-        self.pyte_screen = PyteScreen(self.width, self.height)
-        self.pyte_stream = PyteStream(self.pyte_screen)
 
+        self.screen = Screen(self.width, self.height)
+                
         if not on_device:
             sdl2.ext.init()
 
@@ -263,8 +288,9 @@ class Terminal:
             self.ansi_palette = None
             
             gc.collect()
-
             self.display_bitmap = displayio.Bitmap(self.pixel_width, self.pixel_height, 16)
+
+            gc.collect()
             self.tilegrid = displayio.TileGrid(self.display_bitmap, pixel_shader=self.pico_palette)
             self.tilemap = []
             tiles_per_row = self.font.bitmap.width / self.font_width
@@ -277,25 +303,21 @@ class Terminal:
 
             gc.collect()
 
-        screen.WRITE_FUNC = self.picotui_write
-        screen.SCREEN_SIZE = (self.width, self.height)
-        screen.Screen.set_screen_redraw(self.screen_redraw)
-
         self.root_container = widgets.Container(0, 0, self.width, self.height)
 
         self.messages = widgets.WMultiEntry(
-            self.width, self.amount_of_lines, ["foo", "bar"], fg=7, bg=0)
+            self.width, self.amount_of_lines, ["foo", "bar"], fg=1, bg=0)
         self.render_lines()
         self.root_container.add(0, 1, self.messages)
 
-        self.statusbar = widgets.WLabel("", self.width, fg=15, bg=4)
-        self.set_status_bar("NEW MESSAGE")
+        self.statusbar = widgets.WLabel("", self.width, fg=9, bg=5)
+        self.update_status_bar()
         self.root_container.add(0, self.height - 2, self.statusbar)
 
-        self.prompt = widgets.WLabel("> ", 2, fg=13, bg=0)
+        self.prompt = widgets.WLabel("> ", 2, fg=1, bg=0)
         self.root_container.add(0, self.height - 1, self.prompt)
 
-        self.inputbox = widgets.WTextEntry(self.width - 3, "", bg=0)
+        self.inputbox = widgets.WTextEntry(self.width - 3, "", bg=0, fg=1)
         self.root_container.add(2, self.height - 1, self.inputbox)
         self.root_container.redraw()
 
@@ -307,28 +329,16 @@ class Terminal:
         self.root_container.change_focus(self.inputbox)
         gc.collect()
 
-    def screen_redraw(self, allow_cursor=False):
-        #screen.Screen.attr_color(7, 0)
-        #screen.Screen.cls()
-        #screen.Screen.attr_reset()
-        #self.root_container.redraw()
-        pass
-
-    def picotui_write(self, buf):
-        self.pyte_stream.feed(buf.decode("UTF-8"))
-
     def draw_pc(self):
         window_surface = sdl2.SDL_GetWindowSurface(self.sdl_window.window)
-        cursor_x = self.pyte_screen.cursor.x
-        cursor_y = self.pyte_screen.cursor.y
-        for y in self.pyte_screen.dirty:
+        cursor_x = Screen.x
+        cursor_y = Screen.y
+        for y in Screen.get_dirty():
             for x in range(self.width):
-                data = self.pyte_screen.buffer[y][x].data
-                fg_color = self.pyte_screen.buffer[y][x].fg
-                bg_color = self.pyte_screen.buffer[y][x].bg
-                if y == cursor_y and x == cursor_x:
+                data, fg_color, bg_color = Screen.buffer[y][x]
+                if Screen.cursor_on and y == cursor_y and x == cursor_x:
                     fg_color = 9
-                    bg_color = 6
+                    bg_color = 6 if self.tick else 0
                     if self.kb_state == 1:
                         data = "^"
                     elif self.kb_state == 2:
@@ -344,22 +354,19 @@ class Terminal:
                     window_surface, dst
                 )
         sdl2.SDL_UpdateWindowSurface(self.sdl_window.window)
-        self.pyte_screen.dirty.clear()
+        Screen.clean()
 
     def draw_device(self):
-        cursor_x = self.pyte_screen.cursor.x
-        cursor_y = self.pyte_screen.cursor.y
-        for y in self.pyte_screen.dirty:
+        cursor_x = Screen.x
+        cursor_y = Screen.y
+        for y in Screen.get_dirty():
             for x in range(self.width):
                 tx = self.font_width * x
                 ty = self.font_height * y
-                buf = self.pyte_screen.buffer[y][x]
-                data = buf.data
-                fg_color = buf.fg
-                bg_color = buf.bg
-                if y == cursor_y and x == cursor_x:
+                data, fg_color, bg_color = Screen.buffer[y][x]
+                if Screen.cursor_on and y == cursor_y and x == cursor_x:
                     fg_color = 9
-                    bg_color = 6
+                    bg_color = 6 if self.tick else 0
                     if self.kb_state == 1:
                         data = "^"
                     elif self.kb_state == 2:
@@ -376,12 +383,18 @@ class Terminal:
                                 self.display_bitmap[tx + fx, ty + fy] = bg_color
                 else:
                     bitmaptools.fill_region(self.display_bitmap, tx, ty, tx + self.font_width, ty + self.font_height, bg_color)
-
-        self.pyte_screen.dirty.clear()
+        
+        Screen.clean()
         self.display.refresh()
-        gc.collect()
 
     def draw(self):
+        tick = True if int(time.monotonic() % 1 * 1000) < 500 else False
+        if self.tick != tick:
+            Screen.dirty_cursor()
+            self.tick = tick
+        if not self.menubar.focus:
+            self.inputbox.set_cursor()
+
         if not on_device:
             self.draw_pc()
         else:

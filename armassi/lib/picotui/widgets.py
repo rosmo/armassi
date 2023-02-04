@@ -440,12 +440,13 @@ class WDropDown(ChoiceWidget):
 
 class WTextEntry(EditorExt, EditableWidget):
 
-    def __init__(self, w, text, bg=C_CYAN):
+    def __init__(self, w, text, bg=C_CYAN, fg=C_WHITE):
         EditorExt.__init__(self, width=w, height=1)
         self.t = text
         self.h = 1
         self.w = w
         self.bg = bg
+        self.fg = fg
         self.focus = False
         self.set(text)
         self.col = len(text)
@@ -457,6 +458,8 @@ class WTextEntry(EditorExt, EditableWidget):
 
     def set(self, text):
         self.set_lines([text])
+        self.col = len(text)
+        self.adjust_cursor_eol()
 
     def handle_cursor_keys(self, key):
         if super().handle_cursor_keys(key):
@@ -486,11 +489,7 @@ class WTextEntry(EditorExt, EditableWidget):
         super().handle_mouse(x, y)
 
     def show_line(self, l, i):
-        if self.just_started:
-            fg = C_WHITE
-        else:
-            fg = C_B_WHITE
-        self.attr_color(fg, self.bg)
+        self.attr_color(self.fg, self.bg)
         super().show_line(l, i)
         self.attr_reset()
 

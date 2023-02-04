@@ -1,13 +1,13 @@
 # Colors
 
 C_BLACK    = 0
-C_RED      = 1
-C_GREEN    = 2
-C_YELLOW   = 3
-C_BLUE     = 4
-C_MAGENTA  = 5
-C_CYAN     = 6
-C_WHITE    = 7
+C_RED      = 2
+C_GREEN    = 3
+C_YELLOW   = 4
+C_BLUE     = 5
+C_MAGENTA  = 6
+C_CYAN     = 7
+C_WHITE    = 9
 ATTR_INTENSITY = 8
 C_GRAY     = C_BLACK | ATTR_INTENSITY
 C_B_RED      = C_RED | ATTR_INTENSITY

@@ -1,4 +1,4 @@
-from .screen import Screen
+from screen import Screen
 from .basewidget import *
 from .defs import *
 
@@ -18,9 +18,11 @@ class WMenuBar(ItemSelWidget):
         if self.focus:
             self.cursor(False)
         self.goto(self.x, self.y)
+        self.attr_color(C_WHITE, C_CYAN)
+        self.clear_to_eol()
+        self.goto(self.x, self.y)
         i = 0
         choice_made = False
-        self.attr_color(C_WHITE, C_CYAN)
         for name, pulldown in self.items:
             if self.focus and i == self.choice:
                 self.attr_color(C_B_CYAN, C_CYAN)
@@ -28,7 +30,8 @@ class WMenuBar(ItemSelWidget):
             elif choice_made:
                 self.attr_color(C_WHITE, C_CYAN)
                 choice_made = False
-
+            else:
+                self.attr_color(C_WHITE, C_CYAN)
             self.wr(b"  ")
             self.wr(name)
             self.wr(b"  ")

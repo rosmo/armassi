@@ -1,3 +1,4 @@
+import os
 try:
     import busio
     import armachat_lora
@@ -8,30 +9,58 @@ except ImportError:
 from collections import namedtuple
 import time
 import struct
-import random
+import binascii
+
+import minipb
+
+MeshtasticData = minipb.Wire([
+    ("portnum", "t"),
+    ("payload", "a"),
+    ("want_response", "b"),
+    ("dest", "I"),
+    ("source", "I"),
+    ("request_id", "I"),
+    ("reply_id", "I"),
+    ("emoji", "I"),
+])
+
+MeshtasticNodeInfo = minipb.Wire([
+    ("num", "T"),
+    ("user", [
+        ("id", "U"),
+        ("long_name", "U"),
+        ("short_name", "U"),
+        ("macaddr", "a"),
+        ("hw_model", "x"),
+        ("is_licensed", "b"),
+    ]),
+    ("position", "x"),
+    ("snr", "f"),
+    ("last_heard", "I"),
+    ("device_metrics", "x"),
+])
+
 
 class Communication:
-    def __init__(self, lora_config=None, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None):
+    broadcast = b"\xff\xff\xff\xff"
+
+    def __init__(self, lora_config=None, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None, nick=None):
         self.lora_config = lora_config
         self.lora = None
-        self.my_address = self.convert_address(my_address)
-        self.remote_address = self.convert_address(remote_address)
+        self.my_address = my_address
         self.messages = []
         self.encryption_key = encryption_key
+        self.encryption_key = None
         self.encryption_iv = encryption_iv
         self.idx = 0
+        self.nick = nick
 
     Message = namedtuple(
-        "Message", ["dst", "src", "id", "flags", "s", "rssi", "tstamp", "text"])
-
-    def convert_address(self, address):
-        return [int(i) for i in address.split(".")]
-    
-    def format_address(self, address):
-        return ".".join([str(address[0]), str(address[1]), str(address[2]), str(address[3])])
+        "Message", ["dst", "src", "id", "flags", "s", "rssi", "tstamp", "packet"])
 
     def initialize(self):
         if "m" not in self.lora_config:
+            self.lora_config = {"m": "e5"}
             return
 
         if self.lora_config["m"] != "e5":
@@ -47,33 +76,85 @@ class Communication:
             self.lora.low_datarate_optimize = self.lora_config["ld"]
             self.lora.listen()
 
+        self.announce_myself()
+
     def get_messages(self):
         return self.messages
 
     def clear_messages(self):
         self.messages = []
 
+    def format_address(self, address):
+        return str(binascii.hexlify(address), "utf-8")
+
     def loop(self):
         if self.lora and self.lora.rx_done():
             message = self.receive()
             if message:
-                if message.flags & 0b1000 and not message.text.startswith("!"):
-                     self.send(self.my_address, message.src, "!|" +
-                                  str(message.rssi) + "|" + str(message.s), id=message.id, want_ack=False)
-                self.messages.append(message)
-                return True
+                refresh = False
+                if message.packet['portnum'] == 1: # Text message
+                    self.messages.append(message)
+                    refresh = True
+                if message.packet['portnum'] == 4: # Nodeinfo message
+                    node_info = MeshtasticNodeInfo.decode(message.packet['payload'])
+                    if node_info:
+                        refresh = self.nick[3](node_info['user']['macaddr'], node_info['user']['id'])
+                return refresh
+        self.idx += 1
+        if self.idx > 1000:
+            self.announce_myself()
+            self.idx = 0
         return False
 
-    def send_message(self, text):
-        msg_id = random.randint(0, 2147483647) 
-        msg = self.send(self.my_address, self.remote_address, text, id=msg_id, want_ack=True)
+    def announce_myself(self):
+        nodeinfo_packet = {
+            "num": int.from_bytes(self.my_address, 'little'),
+            "user": {
+                "id": self.nick[0](),
+                "long_name": self.nick[0](),
+                "short_name": self.nick[0]()[0:2].upper(),
+                "macaddr": self.my_address,
+                "hw_model": None,
+                "is_licensed": False,
+            },
+            "position": None,
+            "snr": self.lora.last_snr,
+            "last_heard": None,
+            "device_metrics": None,
+        }
+        packet = {
+            "portnum": 4,
+            "payload": MeshtasticNodeInfo.encode(nodeinfo_packet),
+            "want_response": None,
+            "dest": None,
+            "source": None,
+            "request_id": None,
+            "reply_id": None,
+            "emoji": None,
+        }
+        msg_id = os.urandom(4)
+        self.send(self.my_address, self.broadcast, packet, id=msg_id, want_ack=False)
+
+    def send_message(self, remote_address=b"\xff\xff\xff\xff", text=""):
+        msg_id = os.urandom(4)
+        packet = {
+            "portnum": 1,
+            "payload": text.encode("utf-8"),
+            "want_response": None,
+            "dest": None,
+            "source": None,
+            "request_id": None,
+            "reply_id": None,
+            "emoji": None,
+        }
+        msg = self.send(self.my_address, remote_address,
+                        packet, id=msg_id, want_ack=True)
         if msg:
             self.messages.append(msg)
             return True
         return False
 
     def receive(self):
-        packet_text = None
         header = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
         packet = self.lora.receive()
@@ -87,7 +168,7 @@ class Communication:
             return None
 
         header = packet[0:16]
-        if bytearray(self.my_address) != header[0:4]:
+        if bytearray(self.my_address) != header[0:4] and header[0:4] != self.broadcast:
             return None
 
         payload = bytes(packet[16:])
@@ -99,36 +180,40 @@ class Communication:
             payload = decrypted_out
 
         try:
-            packet_text = str(payload, "utf-8")
-        except UnicodeError:
-            return None
-
+            decoded_packet = MeshtasticData.decode(payload)
+        except Exception as e:
+            print("Failed to decode packet", str(e))
+            return 
+        
         msgID = int.from_bytes(packet[8:12], 'big')
-        msg = self.Message(dst=self.my_address, src=list(packet[4:8]), id=msgID, flags=packet[15],
-                           s=self.lora.last_snr, rssi=self.lora.last_rssi, tstamp=time.localtime(), text=packet_text)
+        msg = self.Message(dst=self.my_address, src=packet[4:8], id=msgID, flags=packet[15],
+                           s=self.lora.last_snr, rssi=self.lora.last_rssi, tstamp=time.localtime(), packet=decoded_packet)
         return msg
 
-    def send(self, sender, destination, text, id=0, hops=3, want_ack=True):
+    def send(self, sender, destination, packet, id, hops=3, want_ack=True):
         dest = bytearray(destination)
         src = bytearray(sender)
-        msg_id = struct.pack("!I", id)
-        flags = bytearray(struct.pack("!I", hops|0b1000 if want_ack else hops&0b0111))
-        
-        payload = bytearray(len(text))
+        # msg_id = struct.pack("!I", id)
+        msg_id = bytearray(id)
+        flags = bytearray(struct.pack(
+            "!I", hops | 0b1000 if want_ack else hops & 0b0111))
+
+        packet_bytes = MeshtasticData.encode(packet)
+        payload = bytearray(len(packet_bytes))
         if self.encryption_key:
+            nonce = src + msg_id
+
             cipher = aesio.AES(self.encryption_key,
-                               aesio.MODE_CTR, self.encryption_iv)
+                               aesio.MODE_CTR, nonce)
             encrypted_out = bytearray(len(payload))
-            cipher.encrypt_into(bytes(text, "utf-8"), encrypted_out)
+            cipher.encrypt_into(packet_bytes, encrypted_out)
             payload = encrypted_out
         else:
-            payload.extend(text.encode("utf-8"))
-
+            payload = packet_bytes
         header = bytearray(dest + src + msg_id + flags)
         if self.lora_config["m"] != "e5":
             body = bytearray(header) + bytearray(payload)
             self.lora.send(body)
-            if not text.startswith("!"):
-                return self.Message(dst=list(header[4:8]), src=self.my_address, id=id, flags=header[15],
-                                    s=self.lora.last_snr, rssi=self.lora.last_rssi, tstamp=time.localtime(), text=text)
+            return self.Message(dst=header[4:8], src=self.my_address, id=id, flags=header[15],
+                                s=self.lora.last_snr, rssi=self.lora.last_rssi, tstamp=time.localtime(), packet=packet)
         return None

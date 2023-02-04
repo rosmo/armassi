@@ -1,5 +1,5 @@
 
-from .screen import Screen
+from screen import Screen
 from .defs import KEYMAP as _KEYMAP
 
 

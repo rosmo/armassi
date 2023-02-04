@@ -3,7 +3,6 @@
 # Copyright (c) 2015-2020 Paul Sokolovsky
 # Distributed under MIT License
 #
-import sys
 
 from .basewidget import Widget
 from .defs import *
@@ -212,31 +211,10 @@ class Editor(Widget):
                 l = l[:self.col + self.margin] + str(key, "utf-8") + l[self.col + self.margin:]
                 self.content[self.cur_line] = l
                 self.col += 1
-                self.adjust_cursor_eol()
+                # self.adjust_cursor_eol()
                 self.update_line()
 
     def deinit_tty(self):
         # Don't leave cursor in the middle of screen
         self.goto(0, self.height)
         super().deinit_tty()
-
-
-if __name__ == "__main__":
-    with open(sys.argv[1]) as f:
-        content = f.read().splitlines()
-        #content = f.readlines()
-
-
-#os.write(1, b"\x1b[18t")
-#key = os.read(0, 32)
-#print(repr(key))
-
-#key = os.read(0, 32)
-#print(repr(key))
-
-    e = Editor()
-    e.init_tty()
-    e.enable_mouse()
-    e.set_lines(content)
-    e.loop()
-    e.deinit_tty()
