@@ -44,7 +44,7 @@ MeshtasticNodeInfo = minipb.Wire([
 class Communication:
     broadcast = b"\xff\xff\xff\xff"
 
-    def __init__(self, lora_config=None, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None, nick=None, beep=None):
+    def __init__(self, lora_config=None, my_address=None, remote_address=None, encryption_key=None, encryption_iv=None, nick=None, beep=None, led=None):
         self.lora_config = lora_config
         self.lora = None
         self.my_address = my_address
@@ -55,6 +55,7 @@ class Communication:
         self.idx = 0
         self.nick = nick
         self.beep = beep
+        self.led = led
 
     Message = namedtuple(
         "Message", ["dst", "src", "id", "flags", "s", "rssi", "tstamp", "packet"])
@@ -89,7 +90,10 @@ class Communication:
         return str(binascii.hexlify(address), "utf-8")
 
     def loop(self):
-        if self.lora and self.lora.rx_done():
+        if not self.lora:
+            return 
+        self.led.value = True
+        if self.lora.rx_done():
             message = self.receive()
             if message:
                 refresh = False
@@ -103,8 +107,10 @@ class Communication:
                         refresh = self.nick[3](node_info['user']['macaddr'], node_info['user']['id'])
                         if refresh:
                             self.messages.append("-!- %s [%s@%s] has joined." % (node_info['user']['id'], node_info['user']['short_name'], binascii.hexlify(node_info['user']['macaddr']).decode("utf-8")))
-                        self.announce_myself()
+                            self.announce_myself()
+                self.led.value = False
                 return refresh
+        self.led.value = False
         return False
 
     def announce_myself(self):
@@ -192,6 +198,7 @@ class Communication:
         return msg
 
     def send(self, sender, destination, packet, id, hops=3, want_ack=True):
+        self.led.value = True
         dest = bytearray(destination)
         src = bytearray(sender)
         # msg_id = struct.pack("!I", id)
@@ -215,6 +222,8 @@ class Communication:
         if self.lora_config["m"] != "e5":
             body = bytearray(header) + bytearray(payload)
             self.lora.send(body)
+            self.led.value = False
             return self.Message(dst=header[4:8], src=self.my_address, id=id, flags=header[15],
                                 s=self.lora.last_snr, rssi=self.lora.last_rssi, tstamp=time.localtime(), packet=packet)
+        self.led.value = False
         return None
